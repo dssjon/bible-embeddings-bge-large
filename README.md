@@ -1,0 +1,1 @@
+# bible-embeddings-bge-large

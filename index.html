@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bible Search App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.5.0"></script>
+  </head>
+  <body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto">
+      <h1 class="text-3xl font-bold mb-4">Bible Semantic Search App</h1>
+
+      <div class="mb-4">
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="Enter your search query"
+          class="w-full p-2 border rounded"
+        />
+      </div>
+
+      <div class="mb-4">
+        <label class="inline-flex items-center mr-4">
+          <input
+            type="checkbox"
+            id="otCheckbox"
+            checked
+            class="form-checkbox"
+          />
+          <span class="ml-2">Old Testament</span>
+        </label>
+        <label class="inline-flex items-center mr-4">
+          <input
+            type="checkbox"
+            id="ntCheckbox"
+            checked
+            class="form-checkbox"
+          />
+          <span class="ml-2">New Testament</span>
+        </label>
+      </div>
+
+      <button
+        id="searchButton"
+        class="bg-blue-500 text-white px-4 py-2 rounded mr-2"
+      >
+        Search
+      </button>
+
+      <div id="status" class="mt-4 text-red-500"></div>
+
+      <div id="resultInfo" class="mt-4 mb-2 text-sm text-gray-600 italic"></div>
+      <div id="results" class="mt-8"></div>
+    </div>
+
+    <script type="module">
+      import {
+        pipeline,
+        cos_sim,
+      } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.5.0";
+
+      let bibleData = [];
+      let pipe;
+
+      const OT_BOOKS = [
+        "gen",
+        "exo",
+        "lev",
+        "num",
+        "deu",
+        "jos",
+        "jdg",
+        "rut",
+        "1sa",
+        "2sa",
+        "1ki",
+        "2ki",
+        "1ch",
+        "2ch",
+        "ezr",
+        "neh",
+        "est",
+        "job",
+        "psa",
+        "pro",
+        "ecc",
+        "sng",
+        "isa",
+        "jer",
+        "lam",
+        "ezk",
+        "dan",
+        "hos",
+        "jol",
+        "amo",
+        "oba",
+        "jon",
+        "mic",
+        "nam",
+        "hab",
+        "zep",
+        "hag",
+        "zec",
+        "mal",
+      ];
+      const NT_BOOKS = [
+        "mat",
+        "mrk",
+        "luk",
+        "jhn",
+        "act",
+        "rom",
+        "1co",
+        "2co",
+        "gal",
+        "eph",
+        "php",
+        "col",
+        "1th",
+        "2th",
+        "1ti",
+        "2ti",
+        "tit",
+        "phm",
+        "heb",
+        "jas",
+        "1pe",
+        "2pe",
+        "1jn",
+        "2jn",
+        "3jn",
+        "jud",
+        "rev",
+      ];
+
+      function updateStatus(message) {
+        document.getElementById("status").textContent = message;
+        console.log(message);
+      }
+
+      // Initialize the model and load data
+      (async () => {
+        try {
+          updateStatus("Initializing model...");
+          pipe = await pipeline(
+            "feature-extraction",
+            "Xenova/bge-large-en-v1.5"
+          );
+          updateStatus("Model initialized. Loading Bible data...");
+          await loadBibleData();
+          updateStatus("Initialization complete.");
+        } catch (error) {
+          console.error("Initialization error:", error);
+          updateStatus(
+            "Error during initialization. Check console for details."
+          );
+        }
+      })();
+
+      async function loadBibleData() {
+        try {
+          const books = [
+            ...OT_BOOKS.map((book) => ({ testament: "ot", book })),
+            ...NT_BOOKS.map((book) => ({ testament: "nt", book })),
+          ];
+
+          for (const { testament, book } of books) {
+            updateStatus(`Loading ${testament}/${book}.json...`);
+            const response = await fetch(`/${testament}/${book}.json`);
+            if (response.ok) {
+              const data = await response.json();
+              bibleData = bibleData.concat(data);
+            } else {
+              console.error(`Failed to load ${testament}/${book}.json`);
+            }
+          }
+          updateStatus("Bible data loaded successfully");
+        } catch (error) {
+          console.error("Error loading Bible data:", error);
+          updateStatus("Error loading Bible data. Check console for details.");
+        }
+      }
+
+      async function searchBible(query) {
+        updateStatus("Searching...");
+        const output = await pipe(query, {
+          useGPU: true,
+          pooling: "mean",
+          normalize: true,
+        });
+        const queryEmbedding = output.data;
+
+        const results = bibleData.map((entry) => {
+          const similarity = cos_sim(queryEmbedding, entry.embedding);
+          return { ...entry.metadata, content: entry.content, similarity };
+        });
+
+        updateStatus("Search complete.");
+        return results.sort((a, b) => b.similarity - a.similarity);
+      }
+
+      function getSelectedBibleFilters() {
+        const ot = document.getElementById("otCheckbox").checked;
+        const nt = document.getElementById("ntCheckbox").checked;
+
+        if (ot !== nt) {
+          return { testament: ot ? "OT" : "NT" };
+        }
+        return {};
+      }
+
+      function displayResults(results) {
+        const resultsDiv = document.getElementById("results");
+        const resultInfoDiv = document.getElementById("resultInfo");
+        resultsDiv.innerHTML = "";
+
+        if (results.length > 0) {
+          resultInfoDiv.textContent = `Showing ${results.length} most similar sections. Full chapters are not displayed.`;
+          resultInfoDiv.style.display = "block";
+        } else {
+          resultInfoDiv.style.display = "none";
+        }
+
+        results.forEach((result) => {
+          const resultDiv = document.createElement("div");
+          resultDiv.className = "bg-white p-4 rounded shadow mb-4";
+          resultDiv.innerHTML = `
+            <h2 class="text-xl font-bold">${result.book} ${result.chapter}</h2>
+            <p class="mt-2">${result.content}</p>
+            <br />
+            <p class="text-sm text-gray-600">Similarity: ${result.similarity.toFixed(
+              4
+            )}</p>
+        `;
+          resultsDiv.appendChild(resultDiv);
+        });
+      }
+
+      document
+        .getElementById("searchButton")
+        .addEventListener("click", async () => {
+          const query = document.getElementById("searchInput").value;
+          const filters = getSelectedBibleFilters();
+          const results = await searchBible(query);
+
+          // Apply filters
+          const filteredResults = results.filter((result) => {
+            if (filters.testament) {
+              return result.testament === filters.testament;
+            }
+            return true;
+          });
+
+          displayResults(filteredResults.slice(0, 2)); // Display top 2 results
+        });
+    </script>
+  </body>
+</html>
